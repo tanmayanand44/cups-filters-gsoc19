@@ -1655,18 +1655,21 @@ static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap, poppler:
       unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
       unsigned char *bp1 = (unsigned char *)image1.data();
 
+      poppler::image temp = poppler::image(reinterpret_cast<char *>(bp),image1.width(),image1.height(),poppler::image::format_argb32);
+      bp=(unsigned char *)temp.data();
+
       bp += rowsize * (bitmapoffset[1] + header.cupsHeight - 1) +
         popplerBitsPerPixel * bitmapoffset[0] / 8;
       bp1 += rowsize * (bitmapoffset[1] + header.cupsHeight - 1) +
           popplerBitsPerPixel * bitmapoffset[0] / 8;
       for (unsigned int h = header.cupsHeight;h > 0;h--) {
         for (unsigned int band = 0;band < nbands;band++) {
-          dp = convertLine(bp1,lineBuf,h,plane+band,header.cupsWidth,
+          dp = convertLine(bp,lineBuf,h,plane+band,header.cupsWidth,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
         bp -= rowsize;
-        bp1 -= bytesPerLine;
+        bp1 -= rowsize1;
       }
     }
   } else {
@@ -1674,18 +1677,21 @@ static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap, poppler:
       unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
       unsigned char *bp1 = (unsigned char *)image1.data();
 
+      poppler::image temp = poppler::image(reinterpret_cast<char *>(bp),image1.width(),image1.height(),poppler::image::format_argb32);
+      bp=(unsigned char *)temp.data();
+      
       bp += rowsize * bitmapoffset[1] +
         popplerBitsPerPixel * bitmapoffset[0] / 8;
       bp1 += rowsize * bitmapoffset[1] +
           popplerBitsPerPixel * bitmapoffset[0] / 8;
       for (unsigned int h = 0;h < header.cupsHeight;h++) {
         for (unsigned int band = 0;band < nbands;band++) {
-          dp = convertLine(bp1,lineBuf,h,plane+band,header.cupsWidth,
+          dp = convertLine(bp,lineBuf,h,plane+band,header.cupsWidth,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
         bp += rowsize;
-        bp1 += bytesPerLine;
+        bp1 += rowsize1;
       }
     }
   }
