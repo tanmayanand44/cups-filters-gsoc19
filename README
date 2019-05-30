@@ -5,4 +5,4 @@ For Testing:
 4.)Build again and test as follows:
 cupsfilter -i application/vnd.cups-pdf  -m application/vnd.cups-raster file > dump
 5.)Then rasterview dump to view the file
-6.) I have generated the results for some files and they are available [here](https://github.com/tanmayanand44/pdftoraster-gsoc19-test_reports)
+6.) I have generated the results for some files and they are available here: https://github.com/tanmayanand44/pdftoraster-gsoc19-test_reports
