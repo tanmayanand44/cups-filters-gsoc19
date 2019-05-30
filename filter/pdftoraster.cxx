@@ -58,6 +58,11 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <splash/SplashBitmap.h>
 #include <strings.h>
 #include <math.h>
+#include <poppler/cpp/poppler-document.h>
+#include <poppler/cpp/poppler-page.h>
+#include <poppler/cpp/poppler-global.h>
+#include <poppler/cpp/poppler-image.h>
+#include <poppler/cpp/poppler-page-renderer.h>
 #ifdef USE_LCMS1
 #include <lcms.h>
 #define cmsColorSpaceSignature icColorSpaceSignature
@@ -166,7 +171,7 @@ namespace {
     {15,143,47,175,7,135,39,167,13,141,45,173,5,133,37,165},
     {207,79,239,111,199,71,231,103,205,77,237,109,197,69,229,101},
     {63,191,31,159,55,183,23,151,61,189,29,157,53,181,21,149},
-    {255,127,223,95,247,119,215,87,253,125,221,93,245,117,213,85} 
+    {255,127,223,95,247,119,215,87,253,125,221,93,245,117,213,85}
   };
   unsigned int dither2[8][8] = {
     {0,32,8,40,2,34,10,42},
@@ -176,13 +181,13 @@ namespace {
     {3,35,11,43,1,33,9,41},
     {51,19,59,27,49,17,57,25},
     {15,47,7,39,13,45,5,37},
-    {63,31,55,23,61,29,53,21} 
+    {63,31,55,23,61,29,53,21}
   };
   unsigned int dither4[4][4] = {
     {0,8,2,10},
     {12,4,14,6},
     {3,11,1,9},
-    {15,7,13,5} 
+    {15,7,13,5}
   };
 
   /* for color profiles */
@@ -224,7 +229,7 @@ cmsCIExyYTRIPLE adobergb_matrix()
     cmsCIExyYTRIPLE m;
 
     double * matrix = cmMatrixAdobeRgb();
-    
+
     m.Red.x = matrix[0];
     m.Red.y = matrix[1];
     m.Red.Y = matrix[2];
@@ -251,7 +256,7 @@ cmsHPROFILE adobergb_profile()
 #else
     cmsToneCurve * Gamma = cmsBuildGamma(NULL, 2.2);
     cmsToneCurve * Gamma3[3];
-#endif    
+#endif
     Gamma3[0] = Gamma3[1] = Gamma3[2] = Gamma;
 
     // Build AdobeRGB profile
@@ -272,7 +277,7 @@ cmsHPROFILE sgray_profile()
     cmsToneCurve Gamma = cmsBuildGamma(256, 2.2);
 #else
     cmsToneCurve * Gamma = cmsBuildGamma(NULL, 2.2);
-#endif 
+#endif
     // Build sGray profile
     wp = sgray_wp();
     sgray = cmsCreateGrayProfile(&wp, Gamma);
@@ -464,7 +469,7 @@ static void parseOpts(int argc, char **argv)
   if (t && strcasestr(t, "pwg"))
     pwgraster = 1;
 #endif /* HAVE_CUPS_1_7 */
-    
+
   ppd = ppdOpenFile(getenv("PPD"));
   if (ppd == NULL)
     fprintf(stderr, "DEBUG: PPD file is not specified.\n");
@@ -542,10 +547,10 @@ static void parseOpts(int argc, char **argv)
 
     if (cm_calibrate == CM_CALIBRATION_ENABLED)
       cm_disabled = 1;
-    else 
+    else
       cm_disabled = cmIsPrinterCmDisabled(getenv("PRINTER"));
-       
-    if (!cm_disabled) 
+
+    if (!cm_disabled)
       cmGetPrinterIccProfile(getenv("PRINTER"), &profile, ppd);
 
     if (profile != NULL) {
@@ -573,7 +578,7 @@ static void parseOpts(int argc, char **argv)
       if (strcasestr(t, "pwg"))
 	pwgraster = 1;
       else
-	pwgraster = 0; 
+	pwgraster = 0;
     }
     cupsRasterParseIPPOptions(&header,num_options,options,pwgraster,1);
 #else
@@ -1399,7 +1404,7 @@ static unsigned int getCMSColorSpaceType(cmsColorSpaceSignature cs)
 /* select convertLine function */
 static void selectConvertFunc(cups_raster_t *raster)
 {
-  if ((colorProfile == NULL || popplerColorProfile == colorProfile) 
+  if ((colorProfile == NULL || popplerColorProfile == colorProfile)
       && (header.cupsColorOrder == CUPS_ORDER_CHUNKED
        || header.cupsNumColors == 1)) {
     if (selectSpecialCase()) return;
@@ -1623,13 +1628,84 @@ static void selectConvertFunc(cups_raster_t *raster)
   }
 }
 
-static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap,
+static unsigned char *onebitpixel(unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height){
+  unsigned char *temp;
+  temp=dst;
+  fprintf(stderr, "height and width in onebitpixel %d %d\n",width,height );
+  int cnt=0;
+  for(int i=0;i<height;i++){
+    for(int j=0;j<width;j+=8){
+      unsigned char tem=0;
+      for(int k=0;k<8;k++){
+        cnt++;
+          tem <<=1;
+          // fprintf(stderr, "%u\n",*src );
+          unsigned int var=*src;
+          if(var>127){
+            tem |= 0x1;
+          }
+          src +=1;
+      }
+      *dst=tem;
+      dst+=1;
+    }
+    // if(i==(height-1))fprintf(stderr, "some data %u counter %d\n",*dst,cnt );
+  }
+  return temp;
+}
+
+static unsigned char *onebytegreyscale(unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height){
+  unsigned char *temp;
+  temp=dst;
+  for(int i=0;i<height;i++){
+    for(int j=0;j<width;j++){
+      dst[0]=(src[0]+src[1]+src[2])/3;
+      // fprintf(stderr, "%u ",*dst );
+      src+=3;
+      dst+=1;
+    }
+    // fprintf(stderr, "\n");
+  }
+  return temp;
+}
+
+static unsigned char *removeAlpha(unsigned char *src, unsigned char *dst, unsigned int width, unsigned int height){
+  unsigned char *temp;
+  temp=dst;
+  for(int i=0;i<height;i++){
+    for(int j=0;j<width;j++){
+      dst[0]=0.3*src[2]+0.6*src[1]+0.1*src[0];
+      dst[1]=dst[0];
+      dst[2]=dst[0];
+      src+=4;
+      dst+=3;
+    }
+  }
+  return temp;
+}
+
+static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap,poppler::document *doc1,
   int pageNo)
 {
   ConvertLineFunc convertLine;
   unsigned char *lineBuf = NULL;
   unsigned char *dp;
   unsigned int rowsize = bitmap->getRowSize();
+
+  poppler::page *current_page =doc1->create_page(pageNo-1);
+  poppler::page_renderer pr;
+  pr.set_render_hint(poppler::page_renderer::text_antialiasing);
+  poppler::image im = pr.render_page(current_page,header.HWResolution[0],header.HWResolution[1],0,0,bytesPerLine*8,header.cupsHeight);
+
+  unsigned char *newdata = (unsigned char *)malloc(sizeof(char)*3*im.width()*im.height());
+  newdata = removeAlpha((unsigned char *)im.const_data(),newdata,im.width(),im.height());
+
+  unsigned char *graydata = (unsigned char *)malloc(sizeof(char)*im.width()*im.height());
+  graydata = onebytegreyscale(newdata,graydata,im.width(),im.height());
+
+  unsigned char *onebitdata = (unsigned char *)malloc(sizeof(char)*ceil((im.width()/8)*im.height()));
+  onebitdata = onebitpixel(graydata,onebitdata,im.width(),im.height());
+
 
   if (allocLineBuf) lineBuf = new unsigned char [bytesPerLine];
   if ((pageNo & 1) == 0) {
@@ -1645,33 +1721,35 @@ static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap,
         popplerBitsPerPixel * bitmapoffset[0] / 8;
       for (unsigned int h = header.cupsHeight;h > 0;h--) {
         for (unsigned int band = 0;band < nbands;band++) {
-          dp = convertLine(bp,lineBuf,h,plane+band,header.cupsWidth,
+          dp = convertLine(onebitdata,lineBuf,h,plane+band,header.cupsWidth,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
         bp -= rowsize;
+        onebitdata-=bytesPerLine;
       }
     }
   } else {
     for (unsigned int plane = 0;plane < nplanes;plane++) {
       unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
 
-      bp += rowsize * bitmapoffset[1] + 
+      bp += rowsize * bitmapoffset[1] +
         popplerBitsPerPixel * bitmapoffset[0] / 8;
       for (unsigned int h = 0;h < header.cupsHeight;h++) {
         for (unsigned int band = 0;band < nbands;band++) {
-          dp = convertLine(bp,lineBuf,h,plane+band,header.cupsWidth,
+          dp = convertLine(onebitdata,lineBuf,h,plane+band,header.cupsWidth,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
         bp += rowsize;
+        onebitdata+=bytesPerLine;
       }
     }
   }
   if (allocLineBuf) delete[] lineBuf;
 }
 
-static void outPage(PDFDoc *doc, Catalog *catalog, int pageNo,
+static void outPage(PDFDoc *doc,poppler::document *doc1, Catalog *catalog, int pageNo,
   SplashOutputDev *out, cups_raster_t *raster)
 {
   SplashBitmap *bitmap;
@@ -1854,7 +1932,7 @@ static void outPage(PDFDoc *doc, Catalog *catalog, int pageNo,
   }
 
   /* write page image */
-  writePageImage(raster,bitmap,pageNo);
+  writePageImage(raster,bitmap,doc1,pageNo);
 }
 
 static void setPopplerColorProfile()
@@ -1946,6 +2024,7 @@ static void setPopplerColorProfile()
 }
 
 int main(int argc, char *argv[]) {
+  poppler::document *doc1;
   PDFDoc *doc;
   SplashOutputDev *out;
   SplashColor paperColor;
@@ -1998,6 +2077,7 @@ int main(int argc, char *argv[]) {
     parsePDFTOPDFComment(fp);
     fclose(fp);
     doc = new PDFDoc(fileName,NULL,NULL);
+    doc1=poppler::document::load_from_file(argv[6],"","");
   }
 
   if (!doc->isOk()) {
@@ -2086,7 +2166,7 @@ int main(int argc, char *argv[]) {
   case CUPS_CSPACE_WHITE:
   case CUPS_CSPACE_GOLD:
   case CUPS_CSPACE_SILVER:
-    if (header.cupsBitsPerColor == 1 
+    if (header.cupsBitsPerColor == 1
        && header.cupsBitsPerPixel == 1) {
       cmode = splashModeMono1;
       popplerBitsPerPixel = 1;
@@ -2124,7 +2204,7 @@ int main(int argc, char *argv[]) {
   }
   selectConvertFunc(raster);
   for (i = 1;i <= npages;i++) {
-    outPage(doc,catalog,i,out,raster);
+    outPage(doc,doc1,catalog,i,out,raster);
   }
   cupsRasterClose(raster);
 
