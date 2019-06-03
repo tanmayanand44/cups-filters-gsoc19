@@ -1641,7 +1641,7 @@ static unsigned char *onebitpixel(unsigned char *src, unsigned char *dst, unsign
           tem <<=1;
           // fprintf(stderr, "%u\n",*src );
           unsigned int var=*src;
-          if(var>127){
+          if(var > dither1[i & 0xf][(j+k) & 0xf]){
             tem |= 0x1;
           }
           src +=1;
@@ -1659,7 +1659,7 @@ static unsigned char *onebytegreyscale(unsigned char *src, unsigned char *dst, u
   temp=dst;
   for(int i=0;i<height;i++){
     for(int j=0;j<width;j++){
-      dst[0]=(src[0]+src[1]+src[2])/3;
+      dst[0]=0.1*src[0]+0.6*src[1]+0.3*src[2];
       // fprintf(stderr, "%u ",*dst );
       src+=3;
       dst+=1;
@@ -1674,9 +1674,9 @@ static unsigned char *removeAlpha(unsigned char *src, unsigned char *dst, unsign
   temp=dst;
   for(int i=0;i<height;i++){
     for(int j=0;j<width;j++){
-      dst[0]=0.3*src[2]+0.6*src[1]+0.1*src[0];
-      dst[1]=dst[0];
-      dst[2]=dst[0];
+      dst[0]=src[2];
+      dst[1]=src[1];
+      dst[2]=src[0];
       src+=4;
       dst+=3;
     }
@@ -1695,18 +1695,52 @@ static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap,poppler::
   poppler::page *current_page =doc1->create_page(pageNo-1);
   poppler::page_renderer pr;
   pr.set_render_hint(poppler::page_renderer::text_antialiasing);
-  poppler::image im = pr.render_page(current_page,header.HWResolution[0],header.HWResolution[1],0,0,bytesPerLine*8,header.cupsHeight);
 
-  unsigned char *newdata = (unsigned char *)malloc(sizeof(char)*3*im.width()*im.height());
+  unsigned char *colordata,*newdata,*graydata,*onebitdata;
+  unsigned int rowsize1,pixel_count;
+  poppler::image im;
+  im = pr.render_page(current_page,header.HWResolution[0],header.HWResolution[1],0,0,header.cupsWidth,header.cupsHeight);
+  newdata = (unsigned char *)malloc(sizeof(char)*3*im.width()*im.height());
   newdata = removeAlpha((unsigned char *)im.const_data(),newdata,im.width(),im.height());
+  pixel_count=im.width()*im.height();
+  //render the page according to the colourspace and generate the requried
+  switch (header.cupsColorSpace) {
+    case CUPS_CSPACE_K://black
+    case CUPS_CSPACE_SW://sgray
 
-  unsigned char *graydata = (unsigned char *)malloc(sizeof(char)*im.width()*im.height());
-  graydata = onebytegreyscale(newdata,graydata,im.width(),im.height());
+     if(header.cupsBitsPerColor==1){
+     im = pr.render_page(current_page,header.HWResolution[0],header.HWResolution[1],0,0,bytesPerLine*8,header.cupsHeight);
+     newdata = (unsigned char *)malloc(sizeof(char)*3*im.width()*im.height());
+     newdata = removeAlpha((unsigned char *)im.const_data(),newdata,im.width(),im.height());
+     graydata=(unsigned char *)malloc(sizeof(char)*im.width()*im.height());
+     cupsImageRGBToWhite(newdata,graydata,pixel_count);
+     onebitdata=(unsigned char *)malloc(sizeof(char)*bytesPerLine*im.height());
+     onebitpixel(graydata,onebitdata,im.width(),im.height());
+     colordata=onebitdata;
+     rowsize1=bytesPerLine;
+     }
+     else{
+       graydata=(unsigned char *)malloc(sizeof(char)*im.width()*im.height());
+       cupsImageRGBToWhite(newdata,graydata,pixel_count);
+       colordata=graydata;
+       rowsize1=header.cupsWidth;
+     }
 
-  unsigned char *onebitdata = (unsigned char *)malloc(sizeof(char)*ceil((im.width()/8)*im.height()));
-  onebitdata = onebitpixel(graydata,onebitdata,im.width(),im.height());
+     break;
+    case CUPS_CSPACE_RGB:
+    case CUPS_CSPACE_ADOBERGB:
+    case CUPS_CSPACE_CMYK:
+    case CUPS_CSPACE_SRGB:
+    default:
+    fprintf(stderr, "here\n" );
+        fprintf(stderr, "header width %d header height%d\n",header.cupsWidth,header.cupsHeight );
+        fprintf(stderr, "bytes per row%d\n",im.bytes_per_row() );
+        rowsize1=header.cupsWidth*3;
+        colordata=newdata;
+      break;
+  }
 
-
+  fprintf(stderr, "done\n" );
   if (allocLineBuf) lineBuf = new unsigned char [bytesPerLine];
   if ((pageNo & 1) == 0) {
     convertLine = convertLineEven;
@@ -1715,34 +1749,33 @@ static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap,poppler::
   }
   if (header.Duplex && (pageNo & 1) == 0 && swap_image_y) {
     for (unsigned int plane = 0;plane < nplanes;plane++) {
-      unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
-
+      // unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
+      unsigned char *bp=colordata;
       bp += rowsize * (bitmapoffset[1] + header.cupsHeight - 1) +
         popplerBitsPerPixel * bitmapoffset[0] / 8;
       for (unsigned int h = header.cupsHeight;h > 0;h--) {
         for (unsigned int band = 0;band < nbands;band++) {
-          dp = convertLine(onebitdata,lineBuf,h,plane+band,header.cupsWidth,
+          dp = convertLine(bp,lineBuf,h,plane+band,header.cupsWidth,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
-        bp -= rowsize;
-        onebitdata-=bytesPerLine;
+        bp -= bytesPerLine;
       }
     }
   } else {
     for (unsigned int plane = 0;plane < nplanes;plane++) {
-      unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
-
+      // unsigned char *bp = (unsigned char *)(bitmap->getDataPtr());
+      unsigned char *bp=colordata;
+      fprintf(stderr, "bytes %d\n",bytesPerLine );
       bp += rowsize * bitmapoffset[1] +
         popplerBitsPerPixel * bitmapoffset[0] / 8;
       for (unsigned int h = 0;h < header.cupsHeight;h++) {
         for (unsigned int band = 0;band < nbands;band++) {
-          dp = convertLine(onebitdata,lineBuf,h,plane+band,header.cupsWidth,
+          dp = convertLine(bp,lineBuf,h,plane+band,header.cupsWidth,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
-        bp += rowsize;
-        onebitdata+=bytesPerLine;
+        bp += rowsize1;
       }
     }
   }
