@@ -1759,7 +1759,7 @@ static void writePageImage(cups_raster_t *raster, SplashBitmap *bitmap,poppler::
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
-        bp -= bytesPerLine;
+        bp -= rowsize1;
       }
     }
   } else {
