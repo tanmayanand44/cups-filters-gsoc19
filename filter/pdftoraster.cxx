@@ -2096,6 +2096,7 @@ int main(int argc, char *argv[]) {
     }
     close(fd);
     doc = new PDFDoc(new GooString(name));
+    doc1=poppler::document::load_from_file(name,"","");
     /* remove name */
     unlink(name);
   } else {
