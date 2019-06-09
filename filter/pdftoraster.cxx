@@ -1606,6 +1606,55 @@ static void writePageImage(cups_raster_t *raster, poppler::document *doc1,
   }
 
 
+  poppler::page *current_page =doc1->create_page(pageNo-1);
+  poppler::page_renderer pr;
+  pr.set_render_hint(poppler::page_renderer::text_antialiasing);
+
+  unsigned char *colordata,*newdata,*graydata,*onebitdata;
+  unsigned int rowsize1,pixel_count;
+  poppler::image im;
+  im = pr.render_page(current_page,header.HWResolution[0],header.HWResolution[1],0,0,header.cupsWidth,header.cupsHeight);
+  newdata = (unsigned char *)malloc(sizeof(char)*3*im.width()*im.height());
+  newdata = removeAlpha((unsigned char *)im.const_data(),newdata,im.width(),im.height());
+  pixel_count=im.width()*im.height();
+  //render the page according to the colourspace and generate the requried
+  switch (header.cupsColorSpace) {
+    case CUPS_CSPACE_K://black
+    case CUPS_CSPACE_SW://sgray
+
+     if(header.cupsBitsPerColor==1){
+     im = pr.render_page(current_page,header.HWResolution[0],header.HWResolution[1],0,0,bytesPerLine*8,header.cupsHeight);
+     newdata = (unsigned char *)malloc(sizeof(char)*3*im.width()*im.height());
+     newdata = removeAlpha((unsigned char *)im.const_data(),newdata,im.width(),im.height());
+     graydata=(unsigned char *)malloc(sizeof(char)*im.width()*im.height());
+     cupsImageRGBToWhite(newdata,graydata,pixel_count);
+     onebitdata=(unsigned char *)malloc(sizeof(char)*bytesPerLine*im.height());
+     onebitpixel(graydata,onebitdata,im.width(),im.height());
+     colordata=onebitdata;
+     rowsize1=bytesPerLine;
+     }
+     else{
+       graydata=(unsigned char *)malloc(sizeof(char)*im.width()*im.height());
+       cupsImageRGBToWhite(newdata,graydata,pixel_count);
+       colordata=graydata;
+       rowsize1=header.cupsWidth;
+     }
+
+     break;
+    case CUPS_CSPACE_RGB:
+    case CUPS_CSPACE_ADOBERGB:
+    case CUPS_CSPACE_CMYK:
+    case CUPS_CSPACE_SRGB:
+    default:
+    fprintf(stderr, "here\n" );
+        fprintf(stderr, "header width %d header height%d\n",header.cupsWidth,header.cupsHeight );
+        fprintf(stderr, "bytes per row%d\n",im.bytes_per_row() );
+        rowsize1=header.cupsWidth*3;
+        colordata=newdata;
+      break;
+  }
+
+  fprintf(stderr, "done\n" );
   if (allocLineBuf) lineBuf = new unsigned char [bytesPerLine];
   if ((pageNo & 1) == 0) {
     convertLine = convertLineEven;
@@ -1624,7 +1673,7 @@ static void writePageImage(cups_raster_t *raster, poppler::document *doc1,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
-        bp -= rowsize;
+        bp -= rowsize1;
       }
     }
   } else {
@@ -1639,7 +1688,7 @@ static void writePageImage(cups_raster_t *raster, poppler::document *doc1,
                  bytesPerLine);
           cupsRasterWritePixels(raster,dp,bytesPerLine);
         }
-        bp += rowsize;
+        bp += rowsize1;
       }
     }
   }
